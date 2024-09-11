@@ -1,0 +1,3 @@
+/home/colin/dev/iotdb_rest/build/CMakeFiles/iotdb_rest.dir
+/home/colin/dev/iotdb_rest/build/CMakeFiles/edit_cache.dir
+/home/colin/dev/iotdb_rest/build/CMakeFiles/rebuild_cache.dir
