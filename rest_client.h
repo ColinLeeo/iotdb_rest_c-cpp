@@ -20,7 +20,7 @@ inline std::string to_string(int value) {
     return os.str();
 }
 
-inline std::string base64_encode(unsigned char const* bytes_to_encode,
+inline std::string base64_encode(unsigned char const *bytes_to_encode,
                                  unsigned int in_len) {
     std::string ret;
     int i = 0;
@@ -112,6 +112,165 @@ inline std::string CompressionToString(CompressionType compression) {
     return "UNKNOWN";
 }
 
+class BitMap {
+   public:
+    /** Initialize a BitMap with given size. */
+    explicit BitMap(size_t size = 0) { resize(size); }
+
+    /** change the size  */
+    void resize(size_t size) {
+        this->size = size;
+        this->bits.resize((size >> 3) + 1);  // equal to "size/8 + 1"
+        reset();
+    }
+
+    /** mark as 1 at the given bit position. */
+    bool mark(size_t position) {
+        if (position >= size) return false;
+
+        bits[position >> 3] |= (char)1 << (position % 8);
+        return true;
+    }
+
+    /** mark as 0 at the given bit position. */
+    bool unmark(size_t position) {
+        if (position >= size) return false;
+
+        bits[position >> 3] &= ~((char)1 << (position % 8));
+        return true;
+    }
+
+    /** mark as 1 at all positions. */
+    void markAll() { std::fill(bits.begin(), bits.end(), (char)0XFF); }
+
+    /** mark as 0 at all positions. */
+    void reset() { std::fill(bits.begin(), bits.end(), (char)0); }
+
+    /** returns the value of the bit with the specified index. */
+    bool isMarked(size_t position) const {
+        if (position >= size) return false;
+
+        return (bits[position >> 3] & ((char)1 << (position % 8))) != 0;
+    }
+
+    /** whether all bits are zero, i.e., no Null value */
+    bool isAllUnmarked() const {
+        size_t j;
+        for (j = 0; j < size >> 3; j++) {
+            if (bits[j] != (char)0) {
+                return false;
+            }
+        }
+        for (j = 0; j < size % 8; j++) {
+            if ((bits[size >> 3] & ((char)1 << j)) != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** whether all bits are one, i.e., all are Null */
+    bool isAllMarked() const {
+        size_t j;
+        for (j = 0; j < size >> 3; j++) {
+            if (bits[j] != (char)0XFF) {
+                return false;
+            }
+        }
+        for (j = 0; j < size % 8; j++) {
+            if ((bits[size >> 3] & ((char)1 << j)) == 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    const std::vector<char> &getByteArray() const { return this->bits; }
+
+    size_t getSize() const { return this->size; }
+
+   private:
+    size_t size;
+    std::vector<char> bits;
+};
+
+class Tablet {
+   private:
+    static const int DEFAULT_ROW_SIZE = 1024;
+
+    void createColumns();
+    void deleteColumns();
+
+   public:
+    std::string deviceId;  // deviceId of this tablet
+    std::vector<std::pair<std::string, TSDataType>>
+        schemas;  // the list of measurement schemas for creating the tablet
+    std::vector<int64_t> timestamps;  // timestamps in this tablet
+    std::vector<void *> values;  // each object is a primitive type array, which
+                                 // represents values of one measurement
+    std::vector<BitMap> bitMaps;  // each bitmap represents the existence of
+                                  // each value in the current column
+    size_t rowSize;       // the number of rows to include in this tablet
+    size_t maxRowNumber;  // the maximum number of rows for this tablet
+    bool isAligned;  // whether this tablet store data of aligned timeseries or
+                     // not
+
+    Tablet() {}
+
+    /**
+     * Return a tablet with default specified row number. This is the standard
+     * constructor (all Tablet should be the same size).
+     *
+     * @param deviceId   the name of the device specified to be written in
+     * @param timeseries the list of measurement schemas for creating the tablet
+     */
+    Tablet(const std::string &deviceId,
+           const std::vector<std::pair<std::string, TSDataType>> &timeseries)
+        : Tablet(deviceId, timeseries, DEFAULT_ROW_SIZE) {}
+
+    /**
+     * Return a tablet with the specified number of rows (maxBatchSize). Only
+     * call this constructor directly for testing purposes. Tablet should
+     * normally always be default size.
+     *
+     * @param deviceId     the name of the device specified to be written in
+     * @param schemas   the list of measurement schemas for creating the row
+     *                     batch
+     * @param maxRowNumber the maximum number of rows for this tablet
+     */
+    Tablet(const std::string &deviceId,
+           const std::vector<std::pair<std::string, TSDataType>> &schemas,
+           size_t maxRowNumber, bool _isAligned = false)
+        : deviceId(deviceId),
+          schemas(schemas),
+          maxRowNumber(maxRowNumber),
+          isAligned(_isAligned) {
+        // create timestamp column
+        timestamps.resize(maxRowNumber);
+        // create value columns
+        values.resize(schemas.size());
+        createColumns();
+        // create bitMaps
+        bitMaps.resize(schemas.size());
+        for (size_t i = 0; i < schemas.size(); i++) {
+            bitMaps[i].resize(maxRowNumber);
+        }
+        this->rowSize = 0;
+    }
+
+    ~Tablet() { deleteColumns(); }
+
+    void addValue(size_t schemaId, size_t rowIndex, void *value);
+
+    void reset();  // Reset Tablet to the default state - set the rowSize to 0
+
+    size_t getTimeBytesSize();
+
+    size_t getValueByteSize();  // total byte size that values occupies
+
+    void setAligned(bool isAligned);
+};
+
 class RestClient {
    public:
     RestClient(std::string ip, int port, std::string username,
@@ -123,7 +282,7 @@ class RestClient {
         }
         std::string credentials = username + ":" + password;
         std::string encoded_credentials = base64_encode(
-            reinterpret_cast<const unsigned char*>(credentials.c_str()),
+            reinterpret_cast<const unsigned char *>(credentials.c_str()),
             credentials.length());
         user_auth_header_ = "Authorization: Basic " + encoded_credentials;
         url_base_ = "http://" + ip + ":" + to_string(port);
@@ -140,17 +299,18 @@ class RestClient {
                                  std::vector<CompressionType> compressions);
 
     bool createDataRegion(std::string path);
+    bool runQuery(std::string sql, Json::Value &value);
 
     bool createMultiTimeseries(std::vector<std::string> paths,
                                std::vector<TSDataType> dataTypes,
                                std::vector<TSEncoding> encodings,
                                std::vector<CompressionType> compressions);
-    int runNonQuery(std::string sql, std::string& errmesg);
-    Json::Value runQuery(std::string sql);
+    int runNonQuery(std::string sql, std::string &errmesg);
 
-    void queryTimeseriesByTime(std::string path, uint64_t begin, uint64_t end);
+    void queryTimeseriesByTime(std::string device_path, std::string ensor_name,
+                               uint64_t begin, uint64_t end);
 
-    
+    void insertTimeseriesRecord();
 
    private:
     bool validatePath(std::string path);

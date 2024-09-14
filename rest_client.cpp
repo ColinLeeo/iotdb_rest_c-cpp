@@ -10,6 +10,176 @@ size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     return size * nmemb;
 }
 
+
+void Tablet::createColumns() {
+    for (size_t i = 0; i < schemas.size(); i++) {
+        TSDataType dataType = schemas[i].second;
+        switch (dataType) {
+            case TSDataType::BOOLEAN:
+                values[i] = new bool[maxRowNumber];
+                break;
+            case TSDataType::INT32:
+                values[i] = new int[maxRowNumber];
+                break;
+            case TSDataType::INT64:
+                values[i] = new int64_t[maxRowNumber];
+                break;
+            case TSDataType::FLOAT:
+                values[i] = new float[maxRowNumber];
+                break;
+            case TSDataType::DOUBLE:
+                values[i] = new double[maxRowNumber];
+                break;
+            case TSDataType::TEXT:
+                values[i] = new std::string[maxRowNumber];
+                break;
+            default:
+                throw UnSupportedDataTypeException(string("Data type ") + to_string(dataType) + " is not supported.");
+        }
+    }
+}
+
+void Tablet::deleteColumns() {
+    for (size_t i = 0; i < schemas.size(); i++) {
+        TSDataType dataType = schemas[i].second;
+        switch (dataType) {
+            case TSDataType::BOOLEAN: {
+                bool* valueBuf = (bool*)(values[i]);
+                delete[] valueBuf;
+                break;
+            }
+            case TSDataType::INT32: {
+                int* valueBuf = (int*)(values[i]);
+                delete[] valueBuf;
+                break;
+            }
+            case TSDataType::INT64: {
+                int64_t* valueBuf = (int64_t*)(values[i]);
+                delete[] valueBuf;
+                break;
+            }
+            case TSDataType::FLOAT: {
+                float* valueBuf = (float*)(values[i]);
+                delete[] valueBuf;
+                break;
+            }
+            case TSDataType::DOUBLE: {
+                double* valueBuf = (double*)(values[i]);
+                delete[] valueBuf;
+                break;
+            }
+            case TSDataType::TEXT: {
+                std::string* valueBuf = (std::string*)(values[i]);
+                delete[] valueBuf;
+                break;
+            }
+            default:
+                throw UnSupportedDataTypeException(string("Data type ") + to_string(dataType) + " is not supported.");
+        }
+    }
+}
+
+void Tablet::addValue(size_t schemaId, size_t rowIndex, void* value) {
+    if (schemaId >= schemas.size()) {
+        char tmpStr[100];
+        sprintf(tmpStr, "Tablet::addValue(), schemaId >= schemas.size(). schemaId=%ld, schemas.size()=%ld.", schemaId, schemas.size());
+        throw std::out_of_range(tmpStr);
+    }
+
+    if (rowIndex >= rowSize) {
+        char tmpStr[100];
+        sprintf(tmpStr, "Tablet::addValue(), rowIndex >= rowSize. rowIndex=%ld, rowSize.size()=%ld.", rowIndex, rowSize);
+        throw std::out_of_range(tmpStr);
+    }
+
+    TSDataType dataType = schemas[schemaId].second;
+    switch (dataType) {
+        case TSDataType::BOOLEAN: {
+            bool* valueBuf = (bool*)(values[schemaId]);
+            valueBuf[rowIndex] = *((bool*)value);
+            break;
+        }
+        case TSDataType::INT32: {
+            int* valueBuf = (int*)(values[schemaId]);
+            valueBuf[rowIndex] = *((int*)value);
+            break;
+        }
+        case TSDataType::INT64: {
+            int64_t* valueBuf = (int64_t*)(values[schemaId]);
+            valueBuf[rowIndex] = *((int64_t*)value);
+            break;
+        }
+        case TSDataType::FLOAT: {
+            float* valueBuf = (float*)(values[schemaId]);
+            valueBuf[rowIndex] = *((float*)value);
+            break;
+        }
+        case TSDataType::DOUBLE: {
+            double* valueBuf = (double*)(values[schemaId]);
+            valueBuf[rowIndex] = *((double*)value);
+            break;
+        }
+        case TSDataType::TEXT: {
+            std::string* valueBuf = (std::string*)(values[schemaId]);
+            valueBuf[rowIndex] = *(std::string*)value;
+            break;
+        }
+        default:
+        //
+    }
+}
+
+void Tablet::reset() {
+    rowSize = 0;
+    for (size_t i = 0; i < schemas.size(); i++) {
+        bitMaps[i].reset();
+    }
+}
+
+size_t Tablet::getTimeBytesSize() {
+    return rowSize * 8;
+}
+
+size_t Tablet::getValueByteSize() {
+    size_t valueOccupation = 0;
+    for (size_t i = 0; i < schemas.size(); i++) {
+        switch (schemas[i].second) {
+            case TSDataType::BOOLEAN:
+                valueOccupation += rowSize;
+                break;
+            case TSDataType::INT32:
+                valueOccupation += rowSize * 4;
+                break;
+            case TSDataType::INT64:
+                valueOccupation += rowSize * 8;
+                break;
+            case TSDataType::FLOAT:
+                valueOccupation += rowSize * 4;
+                break;
+            case TSDataType::DOUBLE:
+                valueOccupation += rowSize * 8;
+                break;
+            case TSDataType::TEXT: {
+                valueOccupation += rowSize * 4;
+                std::string* valueBuf = (std::string*)(values[i]);
+                for (size_t j = 0; j < rowSize; j++) {
+                    valueOccupation += valueBuf[j].size();
+                }
+                break;
+            }
+            default:
+                throw UnSupportedDataTypeException(
+                    string("Data type ") + to_string(schemas[i].second) + " is not supported.");
+        }
+    }
+    return valueOccupation;
+}
+
+void Tablet::setAligned(bool isAligned) {
+    this->isAligned = isAligned;
+}
+
+
 bool RestClient::pingIoTDB() {
     CURL* curl;
     CURLcode res;
@@ -210,7 +380,7 @@ int RestClient::runNonQuery(std::string sql, std::string& errmesg) {
     return code;
 }
 
-bool RestClient::runQuery(std::string sql, Json::Value& value) {
+bool RestClient::runQuery(std::string sql, Json::Value& value){
     CURL* curl;
     CURLcode res;
     std::string readBuffer;
@@ -243,12 +413,17 @@ bool RestClient::runQuery(std::string sql, Json::Value& value) {
     return true;
 }
 
-void queryTimeseriesByTime(std::string device_path, std::string sensor_name,
+void RestClient::queryTimeseriesByTime(std::string device_path, std::string sensor_name,
                            uint64_t begin, uint64_t end) {
-std::ostringstream oss;
-oss << "select " << sensor_name << "from " << device_path << "where time"
+    std::ostringstream oss;
+    oss << "select " << sensor_name << " from " << device_path
+        << "where time >=" << begin << " and time <= " << end << std::endl;
 
+    Json::Value value;
+    if (runQuery(oss.str(), value)) {
+        std::cout << value << std::endl;
+    }
 
+    return;
+}
 
-
-                           }
