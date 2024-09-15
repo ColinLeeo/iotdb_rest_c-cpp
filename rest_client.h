@@ -1,6 +1,9 @@
 #ifndef REST_CLIENT_H
 #define REST_CLIENT_H
 
+#include <curl/curl.h>
+#include <json/json.h>
+
 #include <cstdlib>
 #include <iostream>
 #include <sstream>
@@ -116,17 +119,14 @@ inline std::string CompressionToString(CompressionType compression) {
 
 class BitMap {
    public:
-    /** Initialize a BitMap with given size. */
     explicit BitMap(size_t size = 0) { resize(size); }
 
-    /** change the size  */
     void resize(size_t size) {
         this->size = size;
         this->bits.resize((size >> 3) + 1);  // equal to "size/8 + 1"
         reset();
     }
 
-    /** mark as 1 at the given bit position. */
     bool mark(size_t position) {
         if (position >= size) return false;
 
@@ -134,7 +134,6 @@ class BitMap {
         return true;
     }
 
-    /** mark as 0 at the given bit position. */
     bool unmark(size_t position) {
         if (position >= size) return false;
 
@@ -142,20 +141,16 @@ class BitMap {
         return true;
     }
 
-    /** mark as 1 at all positions. */
     void markAll() { std::fill(bits.begin(), bits.end(), (char)0XFF); }
 
-    /** mark as 0 at all positions. */
     void reset() { std::fill(bits.begin(), bits.end(), (char)0); }
 
-    /** returns the value of the bit with the specified index. */
     bool isMarked(size_t position) const {
         if (position >= size) return false;
 
         return (bits[position >> 3] & ((char)1 << (position % 8))) != 0;
     }
 
-    /** whether all bits are zero, i.e., no Null value */
     bool isAllUnmarked() const {
         size_t j;
         for (j = 0; j < size >> 3; j++) {
@@ -171,7 +166,6 @@ class BitMap {
         return true;
     }
 
-    /** whether all bits are one, i.e., all are Null */
     bool isAllMarked() const {
         size_t j;
         for (j = 0; j < size >> 3; j++) {
@@ -208,7 +202,7 @@ class Tablet {
 
    public:
     std::string deviceId;  // deviceId of this tablet
-    std::vector<std::pair<std::string, TSDataType>>
+    std::vector<std::pair<std::string, TSDataType> >
         schemas;  // the list of measurement schemas for creating the tablet
     std::vector<int64_t> timestamps;  // timestamps in this tablet
     std::vector<void *> values;  // each object is a primitive type array, which
@@ -230,8 +224,11 @@ class Tablet {
      * @param timeseries the list of measurement schemas for creating the tablet
      */
     Tablet(const std::string &deviceId,
-           const std::vector<std::pair<std::string, TSDataType>> &timeseries)
-        : Tablet(deviceId, timeseries, DEFAULT_ROW_SIZE) {}
+           const std::vector<std::pair<std::string, TSDataType> > &timeseries)
+        : deviceId(deviceId), schemas(timeseries) {
+        maxRowNumber = DEFAULT_ROW_SIZE;
+        init();
+    }
 
     /**
      * Return a tablet with the specified number of rows (maxBatchSize). Only
@@ -244,18 +241,19 @@ class Tablet {
      * @param maxRowNumber the maximum number of rows for this tablet
      */
     Tablet(const std::string &deviceId,
-           const std::vector<std::pair<std::string, TSDataType>> &schemas,
+           const std::vector<std::pair<std::string, TSDataType> > &schemas,
            size_t maxRowNumber, bool _isAligned = false)
         : deviceId(deviceId),
           schemas(schemas),
           maxRowNumber(maxRowNumber),
           isAligned(_isAligned) {
-        // create timestamp column
+        init();
+    }
+
+    void init() {
         timestamps.resize(maxRowNumber);
-        // create value columns
         values.resize(schemas.size());
         createColumns();
-        // create bitMaps
         bitMaps.resize(schemas.size());
         for (size_t i = 0; i < schemas.size(); i++) {
             bitMaps[i].resize(maxRowNumber);
@@ -303,41 +301,96 @@ class RestClient {
         std::string encoded_credentials = base64_encode(
             reinterpret_cast<const unsigned char *>(credentials.c_str()),
             credentials.length());
-        user_auth_header_ = "Authorization: Basic " + encoded_credentials;
+        headers_ = NULL;
+        headers_ =
+            curl_slist_append(headers_, "Content-Type: application/json");
+        headers_ = curl_slist_append(
+            headers_, ("Authorization: Basic " + encoded_credentials).c_str());
         url_base_ = "http://" + ip + ":" + to_string(port);
+        curl_global_init(CURL_GLOBAL_DEFAULT);
+        curl_connection_ = curl_easy_init();
     }
 
+    ~RestClient() {
+        curl_slist_free_all(headers_);
+        if (curl_connection_) {
+            curl_easy_cleanup(curl_connection_);
+        }
+        curl_global_cleanup();
+    }
+    // check connection between client and IoTDB
     bool pingIoTDB();
+
+    // create database
+    bool createDatabase(std::string path);
+
+    // create timeseries
     bool createTimeseries(std::string path, TSDataType dataType,
                           TSEncoding encoding, CompressionType compression);
-
     bool createAlingedTimeseries(std::string device_path,
-                                 std::vector<std::string> sensor_list,
+                                 std::vector<std::string> measurement_list,
                                  std::vector<TSDataType> dataTypes,
                                  std::vector<TSEncoding> encodings,
                                  std::vector<CompressionType> compressions);
-
-    bool createDataRegion(std::string path);
-    bool runQuery(std::string sql, Json::Value &value);
-
     bool createMultiTimeseries(std::vector<std::string> paths,
                                std::vector<TSDataType> dataTypes,
                                std::vector<TSEncoding> encodings,
                                std::vector<CompressionType> compressions);
-    int runNonQuery(std::string sql, std::string &errmesg);
 
-    Tablet queryTimeseriesByTime(std::string device_path,
-                                 std::string ensor_name, TSDataType data_type,
-                                 uint64_t begin, uint64_t end);
-    template<typename T>
-    bool insertRecord(std::string device_path, std::string measurement, TSDataType data_type, uint64_t timestamp, T value);
+    // insert data into timeseries/device
+    template <typename T>
+    bool insertRecord(std::string device_path, std::string measurement,
+                      TSDataType data_type, uint64_t timestamp, T value) {
+        CURLcode res;
+        std::string readBuffer;
+        if (curl_connection_) {
+            Json::Value json_data;
+            json_data["is_aligned"] = false;
+            json_data["device"].append(device_path);
+            json_data["timestamp"].append(timestamp);
+            Json::Value measurements;
+            measurements.append(measurement);
+            json_data["measurements_list"].append(measurements);
+            Json::Value dataTypes;
+            dataTypes.append(DatatypeToString(data_type));
+            json_data["data_types"].append(dataTypes);
+            Json::Value values;
+            values.append(value);
+            json_data["values_list"].append(values);
+            Json::StreamWriterBuilder builder;
+            std::string json_str = Json::writeString(builder, json_data);
+            Json::Value json_resp;
+            if (curl_perfrom("/rest/v2/insertRecords", json_str, json_resp)) {
+                int code = json_resp["code"].asInt();
+                if (code != 200) {
+                    std::cout << "insert record failed" << std::endl;
+                    return false;
+                }
+                return true;
+            }
+            return false;
+        }
+        return false;
+    }
     bool insertTablet(Tablet tablet);
 
+    // query data from timeseries
+    bool queryTimeseriesByTime(std::string device_path,
+                               std::string measurement_name,
+                               TSDataType data_type, uint64_t begin,
+                               uint64_t end, Tablet &tablet);
+
+    bool runQuery(std::string sql, Json::Value &value);
+    int runNonQuery(std::string sql, std::string &errmesg);
+
    private:
+    bool curl_perfrom(std::string api, std::string data, Json::Value &value,
+                      bool need_auth_info = true, bool is_post = true);
     bool validatePath(std::string path);
+    CURL *curl_connection_;
     std::string username_;
     std::string password_;
-    std::string user_auth_header_;
+    struct curl_slist *headers_;
     std::string url_base_;
 };
 
