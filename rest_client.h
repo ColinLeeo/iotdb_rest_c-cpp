@@ -6,19 +6,13 @@
 #include <sstream>
 #include <vector>
 
+namespace rest_client {
+
+/** ------- encoding base64 ------ */
 static const std::string base64_chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "abcdefghijklmnopqrstuvwxyz"
     "0123456789+/";
-
-static const std::string root_path = "root";
-static const std::string create_timeseries_req =
-    "create timeseries %s WITH DATATYPE=%s, ENCODING=%s, COMPRESSOR=%s";
-inline std::string to_string(int value) {
-    std::ostringstream os;
-    os << value;
-    return os.str();
-}
 
 inline std::string base64_encode(unsigned char const *bytes_to_encode,
                                  unsigned int in_len) {
@@ -61,6 +55,9 @@ inline std::string base64_encode(unsigned char const *bytes_to_encode,
     return ret;
 }
 
+/** ------- end encoding base64 ------ */
+
+/** ------- schema defination and tostring func ------ */
 enum TSDataType {
 #define TS_DATATYPE_ENUM(name) name,
 #include "schema_enum.def"
@@ -111,6 +108,11 @@ inline std::string CompressionToString(CompressionType compression) {
     }
     return "UNKNOWN";
 }
+
+/** ------- end schema defination and tostring func ------ */
+
+/** ------- Bit map in Tablet ------ */
+// Used to indicate whether there are nulls in the result
 
 class BitMap {
    public:
@@ -194,6 +196,9 @@ class BitMap {
     std::vector<char> bits;
 };
 
+/** ------- end Bit map in Tablet ------ */
+
+/** ------ tablet ------ */
 class Tablet {
    private:
     static const int DEFAULT_ROW_SIZE = 1024;
@@ -262,6 +267,8 @@ class Tablet {
 
     void addValue(size_t schemaId, size_t rowIndex, void *value);
 
+    Json::Value toJson();
+
     void reset();  // Reset Tablet to the default state - set the rowSize to 0
 
     size_t getTimeBytesSize();
@@ -270,6 +277,18 @@ class Tablet {
 
     void setAligned(bool isAligned);
 };
+
+/** ------ end tablet ------ */
+
+/** ------ rest client ------ */
+static const std::string root_path = "root";
+static const std::string create_timeseries_req =
+    "create timeseries %s WITH DATATYPE=%s, ENCODING=%s, COMPRESSOR=%s";
+inline std::string to_string(int value) {
+    std::ostringstream os;
+    os << value;
+    return os.str();
+}
 
 class RestClient {
    public:
@@ -307,10 +326,12 @@ class RestClient {
                                std::vector<CompressionType> compressions);
     int runNonQuery(std::string sql, std::string &errmesg);
 
-    void queryTimeseriesByTime(std::string device_path, std::string ensor_name,
-                               uint64_t begin, uint64_t end);
-
-    void insertTimeseriesRecord();
+    Tablet queryTimeseriesByTime(std::string device_path,
+                                 std::string ensor_name, TSDataType data_type,
+                                 uint64_t begin, uint64_t end);
+    template<typename T>
+    bool insertRecord(std::string device_path, std::string measurement, TSDataType data_type, uint64_t timestamp, T value);
+    bool insertTablet(Tablet tablet);
 
    private:
     bool validatePath(std::string path);
@@ -320,4 +341,7 @@ class RestClient {
     std::string url_base_;
 };
 
+/** ------ end rest client ------ */
+
+}  // namespace rest_client
 #endif  // REST_CLIENT_H
