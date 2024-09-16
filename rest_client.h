@@ -265,7 +265,7 @@ class Tablet {
 
     void addValue(size_t schemaId, size_t rowIndex, void *value);
 
-    Json::Value toJson();
+    Json::Value toJson() const;
 
     void reset();  // Reset Tablet to the default state - set the rowSize to 0
 
@@ -346,14 +346,14 @@ class RestClient {
         if (curl_connection_) {
             Json::Value json_data;
             json_data["is_aligned"] = false;
-            json_data["device"].append(device_path);
-            json_data["timestamp"].append(timestamp);
+            json_data["devices"].append(device_path);
+            json_data["timestamps"].append(timestamp);
             Json::Value measurements;
             measurements.append(measurement);
             json_data["measurements_list"].append(measurements);
             Json::Value dataTypes;
             dataTypes.append(DatatypeToString(data_type));
-            json_data["data_types"].append(dataTypes);
+            json_data["data_types_list"].append(dataTypes);
             Json::Value values;
             values.append(value);
             json_data["values_list"].append(values);
@@ -364,6 +364,9 @@ class RestClient {
                 int code = json_resp["code"].asInt();
                 if (code != 200) {
                     std::cout << "insert record failed" << std::endl;
+                    std::cout << "code is " << code << std::endl;
+                    std::cout << "message" << json_resp["message"].asString()
+                              << std::endl;
                     return false;
                 }
                 return true;
@@ -372,7 +375,7 @@ class RestClient {
         }
         return false;
     }
-    bool insertTablet(Tablet tablet);
+    bool insertTablet(const Tablet& tablet);
 
     // query data from timeseries
     bool queryTimeseriesByTime(std::string device_path,

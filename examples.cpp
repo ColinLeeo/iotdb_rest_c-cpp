@@ -50,12 +50,13 @@ int main() {
     std::cout<<"create aligned timeseries success"<<std::endl;
 
     std::vector<std::pair<std::string, rest_client::TSDataType> > schemas;
+    schemas.push_back(std::make_pair("s0", rest_client::INT32));
     schemas.push_back(std::make_pair("s1", rest_client::INT32));
     schemas.push_back(std::make_pair("s2", rest_client::INT32));
     schemas.push_back(std::make_pair("s3", rest_client::INT32));
     schemas.push_back(std::make_pair("s4", rest_client::INT32));
-    schemas.push_back(std::make_pair("s5", rest_client::INT32));
-   rest_client::Tablet tablet("root.sg1.d1", schemas);
+
+   rest_client::Tablet tablet("root.sg1.d2", schemas);
     for (int64_t time = 0; time < row_num; time++) {
         int row = tablet.rowSize++;
         tablet.timestamps[row] = time;

@@ -129,9 +129,9 @@ void Tablet::addValue(size_t schemaId, size_t rowIndex, void* value) {
     }
 }
 
-Json::Value Tablet::toJson() {
+Json::Value Tablet::toJson() const {
     Json::Value value;
-    value["deviceId"] = deviceId;
+    value["device"] = deviceId;
     value["is_aligned"] = isAligned;
     for (size_t i = 0; i < rowSize; i++) {
         value["timestamps"].append(timestamps[i]);
@@ -323,7 +323,6 @@ bool RestClient::createAlingedTimeseries(
             << (i == sensor_size - 1 ? "" : ",");
     }
     oss << ")";
-    std::cout << oss.str() << std::endl;
     std::string errmesg;
     code = runNonQuery(oss.str(), errmesg);
     if (code != 200) {
@@ -381,6 +380,7 @@ bool RestClient::curl_perfrom(std::string api, std::string data,
             std::string errs;
             std::istringstream s(readBuffer);
             if (!Json::parseFromStream(builder, s, &json_resp, &errs)) {
+                std::cout<< readBuffer << std::endl;
                 std::cout << "parse json response failed: " << errs
                           << std::endl;
                 return false;
@@ -404,8 +404,11 @@ int RestClient::runNonQuery(std::string sql, std::string& errmesg) {
 }
 
 bool RestClient::runQuery(std::string sql, Json::Value& value) {
-    std::string json_data = "{\"sql\":\"" + sql + "\"}";
-    if (!curl_perfrom("/rest/v2/query", json_data, value)) {
+    Json::Value json_data;
+    json_data["sql"] = sql;
+    Json::StreamWriterBuilder writer;
+    std::string json_str = Json::writeString(writer, json_data);
+    if (!curl_perfrom("/rest/v2/query", json_str, value)) {
         std::cout << "query perform failed" << std::endl;
         return false;
     }
@@ -418,8 +421,8 @@ bool RestClient::queryTimeseriesByTime(std::string device_path,
                                        uint64_t end, Tablet& tablet) {
     std::ostringstream oss;
     oss << "select " << sensor_name << " from " << device_path
-        << "where time >=" << begin << " and time <= " << end << std::endl;
-
+        << " where time >=" << begin << " and time <= " << end << std::endl;
+    std::cout<<oss.str() << std::endl;
     Json::Value value;
     if (!runQuery(oss.str(), value)) {
         return false;
@@ -474,7 +477,7 @@ bool RestClient::queryTimeseriesByTime(std::string device_path,
     return true;
 }
 
-bool RestClient::insertTablet(Tablet tablet) {
+bool RestClient::insertTablet(const Tablet& tablet) {
     CURLcode res;
     std::string readBuffer;
     int code = -1;
@@ -486,11 +489,13 @@ bool RestClient::insertTablet(Tablet tablet) {
             code = json_resp["code"].asInt();
             if (code != 200) {
                 std::cout << "insert tablet failed" << std::endl;
+                std::cout << "code is " << code << std::endl;
+                std::cout << "message" << json_resp["message"].asString()
+                          << std::endl;
                 return false;
             }
+            return true;
         }
-
-        return false;
     }
     return false;
 }

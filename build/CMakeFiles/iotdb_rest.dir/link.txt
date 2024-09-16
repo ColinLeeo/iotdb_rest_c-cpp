@@ -1,1 +1,0 @@
-/usr/bin/c++  -g CMakeFiles/iotdb_rest.dir/examples.cpp.o CMakeFiles/iotdb_rest.dir/rest_client.cpp.o -o iotdb_rest  -Wl,-rpath,/usr/local/lib /usr/lib/x86_64-linux-gnu/libcurl.so /usr/local/lib/libjsoncpp.so 
