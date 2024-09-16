@@ -10,6 +10,11 @@
 #include <vector>
 
 namespace rest_client {
+enum errcode {
+    OK = 0,
+    OVERFLOW = 1,
+    UNSUPPORT = 2,
+};
 
 /** ------- encoding base64 ------ */
 static const std::string base64_chars =
@@ -263,7 +268,7 @@ class Tablet {
 
     ~Tablet() { deleteColumns(); }
 
-    void addValue(size_t schemaId, size_t rowIndex, void *value);
+    bool addValue(size_t schemaId, size_t rowIndex, void *value);
 
     Json::Value toJson() const;
 
@@ -375,13 +380,30 @@ class RestClient {
         }
         return false;
     }
-    bool insertTablet(const Tablet& tablet);
+    bool insertTablet(const Tablet &tablet);
 
     // query data from timeseries
     bool queryTimeseriesByTime(std::string device_path,
                                std::string measurement_name,
                                TSDataType data_type, uint64_t begin,
                                uint64_t end, Tablet &tablet);
+    template <typename T>
+    bool queryTimeseriesLatestValue(std::string device_path,
+                                    std::string measurement_name,
+                                    uint64_t &timestamp, T &value) {
+        std::ostringstream oss;
+        oss << "select last " << measurement_name << " from " << device_path;
+        Json::Value resp;
+        if (!runQuery(oss.str(), resp)) {
+            return false;
+        }
+        std::cout << resp.toStyledString() << std::endl;
+        const Json::Value timestamps = resp["timestamps"];
+        const Json::Value values = resp["values"];
+        timestamp = timestamps[0].asUInt64();
+        value = parseJsonValue<T>(values[1][0]);
+        return true;
+    }
 
     bool runQuery(std::string sql, Json::Value &value);
     int runNonQuery(std::string sql, std::string &errmesg);
@@ -390,6 +412,8 @@ class RestClient {
     bool curl_perfrom(std::string api, std::string data, Json::Value &value,
                       bool need_auth_info = true, bool is_post = true);
     bool validatePath(std::string path);
+    template <typename T>
+    T parseJsonValue(const Json::Value &value);
     CURL *curl_connection_;
     std::string username_;
     std::string password_;

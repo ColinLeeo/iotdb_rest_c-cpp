@@ -84,4 +84,10 @@ int main() {
     std::cout<<"query timeseries by time success"<<std::endl;
 
     std::cout << result.toJson();
+    uint64_t timestamp;
+    int32_t last_value;
+    FAILED_EXIST(client.queryTimeseriesLatestValue<int32_t>("root.sg1.d1", "s1", timestamp, last_value),
+                 "query timeseries latest value failed");
+    std::cout<<"query timeseries latest value success"<<std::endl;
+    std::cout << "timestamp: " << timestamp << ", value: " << last_value << std::endl;
 }

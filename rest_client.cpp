@@ -27,8 +27,6 @@ void Tablet::createColumns() {
             case TEXT:
                 values[i] = new std::string[maxRowNumber];
                 break;
-            default:
-                std::cout << "createColumns() default" << std::endl;
         }
     }
 }
@@ -67,20 +65,19 @@ void Tablet::deleteColumns() {
                 delete[] valueBuf;
                 break;
             }
-            default:
-                std::cout << "deleteColumns() default" << std::endl;
         }
     }
 }
 
-void Tablet::addValue(size_t schemaId, size_t rowIndex, void* value) {
+bool Tablet::addValue(size_t schemaId, size_t rowIndex, void* value) {
     if (schemaId >= schemas.size()) {
         char tmpStr[100];
         sprintf(tmpStr,
                 "Tablet::addValue(), schemaId >= schemas.size(). schemaId=%ld, "
                 "schemas.size()=%ld.",
                 schemaId, schemas.size());
-        throw std::out_of_range(tmpStr);
+        std::cout << tmpStr << std::endl;
+        return false;
     }
 
     if (rowIndex >= rowSize) {
@@ -89,7 +86,8 @@ void Tablet::addValue(size_t schemaId, size_t rowIndex, void* value) {
                 "Tablet::addValue(), rowIndex >= rowSize. rowIndex=%ld, "
                 "rowSize.size()=%ld.",
                 rowIndex, rowSize);
-        throw std::out_of_range(tmpStr);
+        std::cout << tmpStr << std::endl;
+        return false;
     }
 
     TSDataType dataType = schemas[schemaId].second;
@@ -127,6 +125,7 @@ void Tablet::addValue(size_t schemaId, size_t rowIndex, void* value) {
         default:
             std::cout << "addValue() default" << std::endl;
     }
+    return true;
 }
 
 Json::Value Tablet::toJson() const {
@@ -237,15 +236,14 @@ size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
 }
 
 bool RestClient::pingIoTDB() {
-    bool ret = false;
     Json::Value value;
     if (curl_connection_) {
         curl_perfrom("/ping", "", value, false, false);
         if (value["code"].asInt() == 200) {
-            ret = true;
+            return true;
         }
     }
-    return ret;
+    return false;
 }
 
 bool RestClient::validatePath(std::string path) {
@@ -262,6 +260,7 @@ bool RestClient::createTimeseries(std::string path, TSDataType dataType,
     if (!validatePath(path)) {
         return false;
     }
+
     int code;
     std::ostringstream oss;
     oss << "CREATE TIMESERIES " << path
@@ -288,11 +287,11 @@ bool RestClient::createMultiTimeseries(
             << "The number of paramters does not match the number of paths";
         return false;
     }
-    std::ostringstream oss;
     for (int i = 0; i < paths.size(); i++) {
         if (!createTimeseries(paths[i], dataTypes[i], encodings[i],
                               compressions[i])) {
-            std::cout << "create timeseries failed" << paths[i] << std::endl;
+            std::cout << "create timeseries failed for " << paths[i]
+                      << std::endl;
             return false;
         }
     }
@@ -313,7 +312,6 @@ bool RestClient::createAlingedTimeseries(
         return false;
     }
 
-    int code;
     std::ostringstream oss;
     oss << "CREATE ALIGNED TIMESERIES " << device_path << "(";
     for (int i = 0; i < sensor_size; i++) {
@@ -324,8 +322,7 @@ bool RestClient::createAlingedTimeseries(
     }
     oss << ")";
     std::string errmesg;
-    code = runNonQuery(oss.str(), errmesg);
-    if (code != 200) {
+    if (runNonQuery(oss.str(), errmesg) != 200) {
         std::cout << "create timeseries failed :" << errmesg;
         return false;
     }
@@ -336,10 +333,8 @@ bool RestClient::createDatabase(std::string path) {
     if (!validatePath(path)) {
         return false;
     }
-    int code;
     std::string errmesg;
-    code = runNonQuery("create database " + path, errmesg);
-    if (code != 200) {
+    if (runNonQuery("create database " + path, errmesg) != 200) {
         std::cout << " create database failed: " << errmesg;
         return false;
     }
@@ -380,7 +375,7 @@ bool RestClient::curl_perfrom(std::string api, std::string data,
             std::string errs;
             std::istringstream s(readBuffer);
             if (!Json::parseFromStream(builder, s, &json_resp, &errs)) {
-                std::cout<< readBuffer << std::endl;
+                std::cout << readBuffer << std::endl;
                 std::cout << "parse json response failed: " << errs
                           << std::endl;
                 return false;
@@ -392,10 +387,13 @@ bool RestClient::curl_perfrom(std::string api, std::string data,
 }
 
 int RestClient::runNonQuery(std::string sql, std::string& errmesg) {
-    std::string json_data = "{\"sql\":\"" + sql + "\"}";
+    Json::Value json_data;
+    json_data["sql"] = sql;
+    Json::StreamWriterBuilder writer;
+    std::string json_str = Json::writeString(writer, json_data);
     Json::Value value;
-    if (!curl_perfrom("/rest/v2/nonQuery", json_data, value)) {
-        std::cout << "curl_perfrom failed" << std::endl;
+    if (!curl_perfrom("/rest/v2/nonQuery", json_str, value)) {
+        std::cout << "curl_perfrom failed: " << std::endl;
         return -1;
     }
     int code = value["code"].asInt();
@@ -409,7 +407,7 @@ bool RestClient::runQuery(std::string sql, Json::Value& value) {
     Json::StreamWriterBuilder writer;
     std::string json_str = Json::writeString(writer, json_data);
     if (!curl_perfrom("/rest/v2/query", json_str, value)) {
-        std::cout << "query perform failed" << std::endl;
+        std::cout << "query perform failed: " << std::endl;
         return false;
     }
     return true;
@@ -422,7 +420,7 @@ bool RestClient::queryTimeseriesByTime(std::string device_path,
     std::ostringstream oss;
     oss << "select " << sensor_name << " from " << device_path
         << " where time >=" << begin << " and time <= " << end << std::endl;
-    std::cout<<oss.str() << std::endl;
+    std::cout << oss.str() << std::endl;
     Json::Value value;
     if (!runQuery(oss.str(), value)) {
         return false;
@@ -498,6 +496,59 @@ bool RestClient::insertTablet(const Tablet& tablet) {
         }
     }
     return false;
+}
+
+template <>
+std::string RestClient::parseJsonValue<std::string>(const Json::Value& value) {
+    return value.asString();
+}
+
+template <>
+bool RestClient::parseJsonValue<bool>(const Json::Value& value) {
+    if (value.isString()) {
+        return value.asString() == "true";
+    }
+    return value.asBool();
+}
+
+template <>
+int32_t RestClient::parseJsonValue<int32_t>(const Json::Value& value) {
+    if (value.isString()) {
+        int result;
+        std::istringstream(value.asString()) >> result;
+        return result;
+    }
+    return value.asInt();
+}
+
+template <>
+int64_t RestClient::parseJsonValue<int64_t>(const Json::Value& value) {
+    if (value.isString()) {
+        int64_t result;
+        std::istringstream(value.asString()) >> result;
+        return result;
+    }
+    return value.asInt64();
+}
+
+template <>
+double RestClient::parseJsonValue<double>(const Json::Value& value) {
+    if (value.isString()) {
+        double result;
+        std::istringstream(value.asString()) >> result;
+        return result;
+    }
+    return value.asDouble();
+}
+
+template <>
+float RestClient::parseJsonValue<float>(const Json::Value& value) {
+    if (value.isString()) {
+        float result;
+        std::istringstream(value.asString()) >> result;
+        return result;
+    }
+    return value.asFloat();
 }
 
 }  // namespace rest_client
